@@ -43,6 +43,7 @@ async def stream_chat_response_with_history(
         start_time = time.time()
         capture = ResponseCapture()
         full_response = ""
+        has_sent_tokens = False
         max_tokens = settings.MAX_NEW_TOKENS
         
         from chatbot.bot.conversation.conversation_handler import (
@@ -62,6 +63,7 @@ async def stream_chat_response_with_history(
             if token:
                 full_response += token
                 await websocket.send_text(token)
+                has_sent_tokens = True
         
         if llm_client.model_settings.reasoning:
             final_answer = extract_content_after_reasoning(
@@ -90,7 +92,12 @@ async def stream_chat_response_with_history(
         
     except Exception as exc:
         logger.exception("Error during streaming: %s", exc)
-        await websocket.send_text("Error during streaming.")
+        # Only send error message if we haven't sent any tokens yet
+        if not has_sent_tokens:
+            try:
+                await websocket.send_json({"error": "Error during streaming."})
+            except Exception:
+                pass  # Connection may be closed
 
 
 async def stream_rag_response_with_history(
@@ -108,6 +115,7 @@ async def stream_rag_response_with_history(
     try:
         start_time = time.time()
         full_response = ""
+        has_sent_tokens = False
         max_tokens = settings.MAX_NEW_TOKENS
         
         from chatbot.bot.conversation.conversation_handler import (
@@ -163,6 +171,7 @@ async def stream_rag_response_with_history(
             context_data = []
         
         await websocket.send_text(retrieval_response)
+        has_sent_tokens = True
         
         # Generate response with context
         streamer, _ = await answer_with_context(
@@ -179,6 +188,7 @@ async def stream_rag_response_with_history(
             if token:
                 full_response += token
                 await websocket.send_text(token)
+                has_sent_tokens = True
         
         if llm_client.model_settings.reasoning:
             final_answer = extract_content_after_reasoning(
@@ -207,10 +217,12 @@ async def stream_rag_response_with_history(
         
     except Exception as exc:
         logger.exception("Error during RAG streaming: %s", exc)
-        try:
-            await websocket.send_text("Error during RAG streaming.")
-        except Exception:
-            pass
+        # Only send error message if we haven't sent any tokens yet
+        if not has_sent_tokens:
+            try:
+                await websocket.send_json({"error": "Error during RAG streaming."})
+            except Exception:
+                pass
 
 
 async def stream_google_search_response_with_history(

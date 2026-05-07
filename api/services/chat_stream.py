@@ -36,6 +36,7 @@ async def stream_chat_response(
         start_time = time.time()
 
         full_response = ""
+        has_sent_tokens = False
         # Use full token limit for accurate responses
         max_tokens = settings.MAX_NEW_TOKENS
         
@@ -50,6 +51,7 @@ async def stream_chat_response(
             if token:
                 full_response += token
                 await websocket.send_text(token)
+                has_sent_tokens = True
 
         if llm_client.model_settings.reasoning:
             final_answer = extract_content_after_reasoning(full_response, llm_client.model_settings.reasoning_stop_tag)
@@ -65,7 +67,13 @@ async def stream_chat_response(
         logger.info(f"\n--- Chat Response Took {took:.2f} seconds ---")
     except Exception as exc:
         logger.exception("Error during streaming: %s", exc)
-        await websocket.send_text("Error during streaming.")
+        # Only send error message if we haven't sent any tokens yet
+        # If tokens were already sent, closing the connection cleanly is enough
+        if not has_sent_tokens:
+            try:
+                await websocket.send_json({"error": "Error during streaming."})
+            except Exception:
+                pass  # Connection may be closed
 
 
 # TODO: https://github.com/umbertogriffo/rag-chatbot/pull/10#discussion_r2936567672
@@ -89,6 +97,7 @@ async def stream_rag_response(
     """
     try:
         start_time = time.time()
+        has_sent_tokens = False
         ctx_synthesis_strategy = get_ctx_synthesis_strategy(
             settings.SYNTHESIS_STRATEGY, llm=llm_client, chatbot_mode=settings.CHATBOT_MODE
         )
@@ -138,6 +147,7 @@ async def stream_rag_response(
             context_data = []
 
         await websocket.send_text(retrieval_response)
+        has_sent_tokens = True
 
         streamer, _ = await answer_with_context(
             llm_client,
@@ -153,6 +163,7 @@ async def stream_rag_response(
             if token:
                 full_response += token
                 await websocket.send_text(token)
+                has_sent_tokens = True
 
         if llm_client.model_settings.reasoning:
             final_answer = extract_content_after_reasoning(full_response, llm_client.model_settings.reasoning_stop_tag)
@@ -168,8 +179,12 @@ async def stream_rag_response(
 
     except Exception as exc:
         logger.exception("Error during RAG streaming: %s", exc)
-        try:
-            await websocket.send_text("Error during RAG streaming.")
+        # Only send error message if we haven't sent any tokens yet
+        if not has_sent_tokens:
+            try:
+                await websocket.send_json({"error": "Error during RAG streaming."})
+            except Exception:
+                pass  # Connection may be closed
         except Exception:
             pass  # Connection may be closed
 
